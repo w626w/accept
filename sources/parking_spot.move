@@ -104,19 +104,18 @@ module parkinglot::parkinglot {
     }
 
     // Calculate parking fee
-    public fun calculate_parking_fee(start_time: u64, end_time: u64, base_rate: u64, _is_peak: bool): u64 {
+    public fun calculate_parking_fee(start_time: u64, end_time: u64, base_rate: u64): u64 {
         let duration = end_time - start_time;
         duration * base_rate
     }
 
     // Withdraw profits from the parking lot (ensure caller is administrator)
     public fun withdraw_profits(
-        admin: &AdminCap,
+        _: &AdminCap,
         self: &mut ParkingLot,
         amount: u64,
         ctx: &mut tx_context::TxContext
     ): coin::Coin<SUI> {
-        assert!(tx_context::sender(ctx) == admin.admin, 101);
         coin::take(&mut self.balance, amount, ctx)
     }
 
@@ -124,16 +123,8 @@ module parkinglot::parkinglot {
     public fun distribute_profits(self: &mut ParkingLot, ctx: &mut tx_context::TxContext) {
         let total_balance = balance::value(&self.balance);
         let admin_amount = total_balance;
-
         let admin_coin = coin::take(&mut self.balance, admin_amount, ctx);
-
         transfer::public_transfer(admin_coin, self.admin);
     }
 
-    // Test function for generating slots (only for testing purposes)
-    #[test_only]
-    public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
-        // Initialize test environment
-        init(ctx);
-    }
 }
