@@ -1,13 +1,14 @@
-// This module defines a smart contract for managing a parking lot, including parking slots, payments, and administration.
-
-module parkinglot::parkinglot {
+module parking_spot::parking_spot {
     use sui::coin;
     use sui::balance;
     use sui::sui::SUI;
     use sui::clock::{Clock, timestamp_ms};
 
-    // Error code for when a parking slot is not available
+    // Error codes
     const EParkingSlotNotAvailable: u64 = 2;
+    const EUnauthorizedAccess: u64 = 3;
+    const ESlotNotFound: u64 = 4;
+    const EInsufficientFunds: u64 = 5;
 
     // Define the structure of a parking slot
     public struct Slot has key, store {
@@ -39,7 +40,7 @@ module parkinglot::parkinglot {
     }
 
     // Define the module initialization function
-    fun init(ctx: &mut tx_context::TxContext) {
+    public fun init(ctx: &mut tx_context::TxContext) {
         let admin_address = tx_context::sender(ctx);
         // Create AdminCap object
         let admin_cap = AdminCap {
@@ -62,7 +63,7 @@ module parkinglot::parkinglot {
 
     // Only administrators can create parking slots
     public fun create_slot(admin_cap: &AdminCap, ctx: &mut tx_context::TxContext, parking_lot: &mut ParkingLot) {
-        assert!(admin_cap.admin == parking_lot.admin, EParkingSlotNotAvailable); // Ensure caller is an administrator
+        assert!(admin_cap.admin == parking_lot.admin, EUnauthorizedAccess); // Ensure caller is an administrator
         let new_slot = Slot {
             id: object::new(ctx),
             status: false,
@@ -73,23 +74,31 @@ module parkinglot::parkinglot {
     }
 
     // Reserve a parking slot
-    public fun reserve_slot(slot: &mut Slot) {
+    public fun reserve_slot(parking_lot: &mut ParkingLot, slot_id: UID) {
+        let index = find_slot_index(&parking_lot.slots, slot_id);
+        let slot = &mut vector::borrow_mut(&mut parking_lot.slots, index);
         assert!(!slot.status, EParkingSlotNotAvailable);
         slot.status = true;
     }
 
     // Occupy a parking slot
     public fun enter_slot(slot: &mut Slot, clock: &Clock) {
-        assert!(!slot.status, EParkingSlotNotAvailable); // Modify: Ensure slot is not occupied
+        assert!(!slot.status, EParkingSlotNotAvailable); // Ensure slot is not occupied
         slot.status = true;
         slot.start_time = timestamp_ms(clock); // Record start time
     }
 
     // Vacate a parking slot
-    public fun exit_slot(slot: &mut Slot, clock: &Clock) {
+    public fun exit_slot(slot: &mut Slot, clock: &Clock, parking_lot: &mut ParkingLot, rate: u64, ctx: &mut tx_context::TxContext) {
         assert!(slot.status, EParkingSlotNotAvailable); // Ensure slot is occupied
         slot.status = false;
         slot.end_time = timestamp_ms(clock); // Record end time
+
+        // Calculate and collect parking fee
+        let fee = calculate_parking_fee(slot.start_time, slot.end_time, rate, false);
+        let payment_record = create_payment_record(fee, ctx, clock);
+        balance::add(&mut parking_lot.balance, fee);
+        transfer::public_transfer(payment_record, tx_context::sender(ctx));
     }
 
     // Adjust payment record creation
@@ -116,8 +125,11 @@ module parkinglot::parkinglot {
         amount: u64,
         ctx: &mut tx_context::TxContext
     ): coin::Coin<SUI> {
-        assert!(tx_context::sender(ctx) == admin.admin, 101);
-        coin::take(&mut self.balance, amount, ctx)
+        assert!(tx_context::sender(ctx) == admin.admin, EUnauthorizedAccess);
+        assert!(balance::value(&self.balance) >= amount, EInsufficientFunds);
+        let coin = coin::take(&mut self.balance, amount, ctx);
+        transfer::public_transfer(coin, admin.admin);
+        coin
     }
 
     // Distribute profits of the parking lot
@@ -128,6 +140,31 @@ module parkinglot::parkinglot {
         let admin_coin = coin::take(&mut self.balance, admin_amount, ctx);
 
         transfer::public_transfer(admin_coin, self.admin);
+    }
+
+    // Find a slot index by its UID
+    public fun find_slot_index(slots: &vector<Slot>, slot_id: UID): u64 {
+        let len = vector::length(slots);
+        let mut i = 0;
+        while (i < len) {
+            let slot = &vector::borrow(slots, i);
+            if (slot.id == slot_id) {
+                return i;
+            }
+            i = i + 1;
+        }
+        assert!(false, ESlotNotFound);
+        0
+    }
+
+    // Get parking lot information
+    public fun get_parking_lot_info(parking_lot: &ParkingLot): (UID, address, u64) {
+        (parking_lot.id, parking_lot.admin, balance::value(&parking_lot.balance))
+    }
+
+    // Get slot information
+    public fun get_slot_info(slot: &Slot): (UID, bool, u64, u64) {
+        (slot.id, slot.status, slot.start_time, slot.end_time)
     }
 
     // Test function for generating slots (only for testing purposes)
