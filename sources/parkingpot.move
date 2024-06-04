@@ -31,6 +31,7 @@ module parkinglot::parkinglot {
         id: UID,
         amount: u64,
         payment_time: u64,
+        user: address,
     }
 
     public struct AdminCap has key, store {
@@ -98,7 +99,14 @@ module parkinglot::parkinglot {
         let current_userBalance=coin::balance_mut(coin);
         let payment_coin = coin::take( current_userBalance, parking_fee, ctx);
         coin::put(&mut parking_lot.balance, payment_coin);
-        //create_payment_record(parking_fee, ctx, clock);
+
+        let payment_record = create_payment_record(
+            parking_fee,
+            timestamp_ms(clock),
+            slot.current_user,
+            ctx
+        );
+        transfer::public_transfer(payment_record, parking_lot.admin);
 
         slot.status = false;
         slot.current_user = @0x0; // 清空当前用户地址
@@ -108,13 +116,18 @@ module parkinglot::parkinglot {
 
 
     // 创建支付记录
-    public fun create_payment_record(amount: u64, ctx: &mut tx_context::TxContext, clock: &Clock): PaymentRecord {
-        let payment_time = timestamp_ms(clock);
+    public fun create_payment_record(
+        amount: u64,
+        payment_time: u64,
+        user: address,
+        ctx: &mut tx_context::TxContext
+    ): PaymentRecord {
         let id_ = object::new(ctx);
         PaymentRecord {
             id: id_,
             amount,
             payment_time,
+            user,
         }
     }
 
