@@ -39,7 +39,7 @@ module parkinglot::parkinglot {
         admin: address,
     }
 
-    // 初始化停车场及管理员
+    // Initialize the parking lot and the admin
     fun init(ctx: &mut tx_context::TxContext) {
         let admin_address = tx_context::sender(ctx);
         let admin_cap = AdminCap {
@@ -58,7 +58,7 @@ module parkinglot::parkinglot {
         transfer::public_transfer(parking_lot, admin_address);
     }
 
-    // 创建停车位
+    // Create a new parking slot
     public fun create_slot(admin_cap: &AdminCap, ctx: &mut tx_context::TxContext, parking_lot: &mut ParkingLot) {
         assert!(admin_cap.admin == tx_context::sender(ctx), ENotAdmin);
         let new_slot = Slot {
@@ -71,22 +71,21 @@ module parkinglot::parkinglot {
         vector::push_back(&mut parking_lot.slots, new_slot);
     }
 
-    // 预订停车位
+    // Reserve a parking slot
     public fun reserve_slot(slot: &mut Slot) {
         assert!(!slot.status, EParkingSlotNotAvailable);
         slot.status = true;
-
     }
 
-    // 进入停车位
+    // Enter a parking slot
     public fun enter_slot(slot: &mut Slot, clock: &Clock, user:address){
         assert!(!slot.status, EParkingSlotNotAvailable);
         slot.status = true;
         slot.start_time = timestamp_ms(clock);
         slot.current_user= user;
-   }
+    }
 
-    // 离开停车位
+    // Exit a parking slot
     public entry fun exit_slot(slot: &mut Slot, clock: &Clock, base_rate: u64, parking_lot: &mut ParkingLot,coin:&mut Coin<SUI>,ctx: &mut TxContext) {
         assert!(slot.status, EParkingSlotNotOccupied);
         let current_user = slot.current_user;
@@ -109,13 +108,13 @@ module parkinglot::parkinglot {
         transfer::public_transfer(payment_record, parking_lot.admin);
 
         slot.status = false;
-        slot.current_user = @0x0; // 清空当前用户地址
+        slot.current_user = @0x0; // Clear the current user address
 
         parking_lot.total_profits = parking_lot.total_profits + parking_fee;
     }
 
 
-    // 创建支付记录
+    // Create a payment record
     public fun create_payment_record(
         amount: u64,
         payment_time: u64,
@@ -131,13 +130,13 @@ module parkinglot::parkinglot {
         }
     }
 
-    // 计算停车费用
+    // Calculate the parking fee
     public fun calculate_parking_fee(start_time: u64, end_time: u64, base_rate: u64): u64 {
-        let duration = (end_time - start_time) / 3600000; // 转换为小时
+        let duration = (end_time - start_time) / 3600000; // Convert to hours
         duration * base_rate
     }
 
-    // 提取利润，全部提取到管理员地址，可根据需要修改方案
+    // Withdraw profits, all profits are transferred to the admin address, can be modified as needed
     public fun withdraw_profits(
         admin: &AdminCap,
         self: &mut ParkingLot,
@@ -148,7 +147,7 @@ module parkinglot::parkinglot {
         coin::take(&mut self.balance, amount, ctx)
     }
 
-    // 分配利润,可根据需要修改分配方案
+    // Distribute profits, the distribution plan can be modified as needed
     public fun distribute_profits(self: &mut ParkingLot, ctx: &mut tx_context::TxContext) {
         assert!(sender(ctx) == self.admin, ENotAdmin);
         let total_balance = balance::value(&self.balance);
@@ -159,7 +158,7 @@ module parkinglot::parkinglot {
         transfer::public_transfer(admin_coin, self.admin);
     }
 
-    // 测试生成停车位（仅用于测试目的）
+    // Test function to generate parking slots (for testing purposes only)
     #[test_only]
     public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
         init(ctx);
