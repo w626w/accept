@@ -48,26 +48,25 @@ module parkinglot::parkinglot {
 
     // Initialize the parking lot and the admin
     fun init(ctx: &mut tx_context::TxContext) {
-        let admin_address = tx_context::sender(ctx);
         let admin_cap = AdminCap {
             id: object::new(ctx),
-            admin: admin_address,
+            admin: ctx.sender(),
         };
-        transfer::public_transfer(admin_cap, admin_address);
+        transfer::public_transfer(admin_cap, ctx.sender());
 
         let parking_lot = ParkingLot {
             id: object::new(ctx),
-            admin: admin_address,
+            admin: ctx.sender(),
             slots: vector::empty(),
             balance: balance::zero(),
             total_profits: 0,
         };
-        transfer::public_transfer(parking_lot, admin_address);
+        transfer::share_object(parking_lot);
     }
 
     // Create a new parking slot
-    public fun create_slot(admin_cap: &AdminCap, ctx: &mut tx_context::TxContext, parking_lot: &mut ParkingLot, owner: address) {
-        assert!(admin_cap.admin == tx_context::sender(ctx), ENotAdmin);
+    public fun create_slot(_: &AdminCap, ctx: &mut TxContext, parking_lot: &mut ParkingLot, owner: address) {
+
         let new_slot = Slot {
             id: object::new(ctx),
             status: false,
