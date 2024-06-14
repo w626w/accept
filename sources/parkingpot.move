@@ -5,29 +5,26 @@ module parkinglot::parkinglot {
     use sui::clock::{Clock, timestamp_ms};
     use sui::coin::Coin;
     use sui::tx_context::sender;
+    use sui::table::{Self, Table};
 
     // Define error codes
     const EParkingSlotNotAvailable: u64 = 2;
-    const EParkingSlotNotOccupied: u64 = 3;
-    const ENotAdmin: u64 = 101;
-    const ENotMony: u64 = 888;
 
     // Define the Slot structure
     public struct Slot has key, store {
         id: UID,
         status: bool,
+        seed_num: u8,
         start_time: u64,
         end_time: u64,
         current_user: address,
-        ownerAddress: address,
-        slot_profits: u64,
     }
 
     // Define the ParkingLot structure
     public struct ParkingLot has key, store {
         id: UID,
         admin: address,
-        slots: vector<Slot>,
+        slots: Table<u8, address>,
         balance: Balance<SUI>,
         total_profits: u64,
     }
@@ -48,83 +45,59 @@ module parkinglot::parkinglot {
 
     // Initialize the parking lot and the admin
     fun init(ctx: &mut tx_context::TxContext) {
-        let admin_address = tx_context::sender(ctx);
         let admin_cap = AdminCap {
             id: object::new(ctx),
-            admin: admin_address,
+            admin: ctx.sender(),
         };
-        transfer::public_transfer(admin_cap, admin_address);
+        transfer::public_transfer(admin_cap, ctx.sender());
 
         let parking_lot = ParkingLot {
             id: object::new(ctx),
-            admin: admin_address,
-            slots: vector::empty(),
+            admin: ctx.sender(),
+            slots: table::new(ctx),
             balance: balance::zero(),
             total_profits: 0,
         };
-        transfer::public_transfer(parking_lot, admin_address);
-    }
-
-    // Create a new parking slot
-    public fun create_slot(admin_cap: &AdminCap, ctx: &mut tx_context::TxContext, parking_lot: &mut ParkingLot, owner: address) {
-        assert!(admin_cap.admin == tx_context::sender(ctx), ENotAdmin);
-        let new_slot = Slot {
-            id: object::new(ctx),
-            status: false,
-            start_time: 0,
-            end_time: 0,
-            current_user: @0x0,
-            ownerAddress: owner,
-            slot_profits: 0,
-        };
-        vector::push_back(&mut parking_lot.slots, new_slot);
+        transfer::share_object(parking_lot);
     }
 
     // Reserve a parking slot
-    public fun reserve_slot(slot: &mut Slot, clock: &Clock, user: address) {
-        assert!(!slot.status, EParkingSlotNotAvailable);
-        slot.status = true;
-        slot.start_time = timestamp_ms(clock) + 4 * 3600000; // Reserve the slot for 4 hours later
-        slot.current_user = user;
-    }
+    public fun reserve_slot(self: &mut ParkingLot, seed_num_: u8, c: &Clock, ctx: &mut TxContext) : Slot {
+        assert!(seed_num_ > 0, EParkingSlotNotAvailable);
+        // reserve the slot from table 
+        table::add(&mut self.slots, seed_num_, ctx.sender());
 
-    // Enter a parking slot
-    public fun enter_slot(slot: &mut Slot, clock: &Clock, user: address) {
-        assert!(!slot.status, EParkingSlotNotAvailable);
-        slot.status = true;
-        slot.start_time = timestamp_ms(clock);
-        slot.current_user = user;
+        let slot = Slot {
+            id: object::new(ctx),
+            status: true,
+            seed_num: seed_num_,
+            start_time: timestamp_ms(c) + 4 * 3600000,
+            end_time:0,
+            current_user: ctx.sender()
+        };
+        slot
     }
 
     // Exit a parking slot
-    public entry fun exit_slot(slot: &mut Slot, clock: &Clock, parking_lot: &mut ParkingLot, coin: &mut Coin<SUI>, ctx: &mut tx_context::TxContext) {
-        assert!(slot.status, EParkingSlotNotOccupied);
-        let current_user = slot.current_user;
-        assert!(current_user == sender(ctx), EParkingSlotNotOccupied);
+    public entry fun exit_slot(slot: Slot, c: &Clock, self: &mut ParkingLot, coin: &mut Coin<SUI>, ctx: &mut TxContext) {
 
-        slot.end_time = timestamp_ms(clock);
-
-        let parking_fee = calculate_parking_fee(slot.start_time, slot.end_time);
-
+        let parking_fee = calculate_parking_fee(slot.start_time, timestamp_ms(c));
         let current_user_balance = coin::balance_mut(coin);
         let payment_coin = coin::take(current_user_balance, parking_fee, ctx);
 
-        coin::put(&mut parking_lot.balance, payment_coin); // Put into the parking lot balance
-
-        slot.slot_profits = slot.slot_profits + parking_fee; // Save the slot's profits
+        coin::put(&mut self.balance, payment_coin); // Put into the parking lot balance
 
         let payment_record = create_payment_record(
             parking_fee,
-            timestamp_ms(clock),
+            timestamp_ms(c),
             slot.current_user,
             ctx
         );
-        transfer::public_transfer(payment_record, parking_lot.admin);
+        transfer::public_transfer(payment_record, self.admin);
+        self.total_profits = self.total_profits + parking_fee;
 
-        slot.status = false;
-        slot.current_user = @0x0; // Clear the current user address
-
-        parking_lot.total_profits = parking_lot.total_profits + parking_fee;
+        table::remove(&mut self.slots, slot.seed_num);
+        destroye_slot(slot);
     }
 
     // Create a payment record
@@ -161,39 +134,31 @@ module parkinglot::parkinglot {
 
     // Withdraw profits, all profits are transferred to the admin address, can be modified as needed
     public fun withdraw_profits(
-        admin: &AdminCap,
+        _: &AdminCap,
         self: &mut ParkingLot,
         amount: u64,
-        ctx: &mut tx_context::TxContext
-    ) {
-        assert!(sender(ctx) == admin.admin, ENotAdmin);
-        assert!(amount < self.total_profits / 10, ENotMony);
-        let question = coin::take(&mut self.balance, amount, ctx); // In case of emergency, the admin can withdraw up to 10% of the total funds
-        transfer::public_transfer(question, admin.admin);
-
+        ctx: &mut TxContext
+    ) : Coin<SUI> {
+        let coin_ = coin::take(&mut self.balance, amount, ctx); // In case of emergency, the admin can withdraw up to 10% of the total funds
         self.total_profits = self.total_profits - amount; // Only update the total balance, individual slot balances remain unchanged
-    }
-
-    // Distribute profits, the distribution plan can be modified as needed
-    public fun distribute_profits(adminpull: &mut ParkingLot, slotowner: &mut Slot, ctx: &mut tx_context::TxContext) {
-        assert!(sender(ctx) == slotowner.ownerAddress, ENotAdmin);
-        let total_balance = balance::value(&adminpull.balance);
-        let admin_amount = total_balance / 10;
-        let owner_amount = total_balance * 8 / 10;
-
-        let admin_coin = coin::take(&mut adminpull.balance, admin_amount, ctx); // Admin takes 10% of the profits
-        transfer::public_transfer(admin_coin, adminpull.admin);
-
-        let owner_coin = coin::take(&mut adminpull.balance, owner_amount, ctx); // Slot owner takes 80% of the profits
-        transfer::public_transfer(owner_coin, slotowner.ownerAddress);
-
-        adminpull.total_profits = adminpull.total_profits - slotowner.slot_profits * 9 / 10;
-        slotowner.slot_profits = slotowner.slot_profits / 10; // Calculate the remaining profits
+        coin_
     }
 
     // Test function to generate parking slots (for testing purposes only)
     #[test_only]
     public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
         init(ctx);
+    }
+
+    fun destroye_slot(self: Slot) {
+        let Slot {
+            id,
+            status: _,
+            seed_num: _,
+            start_time: _,
+            end_time: _,
+            current_user: _
+        } = self;
+        object::delete(id);
     }
 }
