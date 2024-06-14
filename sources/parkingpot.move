@@ -9,9 +9,6 @@ module parkinglot::parkinglot {
 
     // Define error codes
     const EParkingSlotNotAvailable: u64 = 2;
-    const EParkingSlotNotOccupied: u64 = 3;
-    const ENotAdmin: u64 = 101;
-    const ENotMony: u64 = 888;
 
     // Define the Slot structure
     public struct Slot has key, store {
@@ -135,43 +132,23 @@ module parkinglot::parkinglot {
         duration * base_rate
     }
 
-    // // Withdraw profits, all profits are transferred to the admin address, can be modified as needed
-    // public fun withdraw_profits(
-    //     admin: &AdminCap,
-    //     self: &mut ParkingLot,
-    //     amount: u64,
-    //     ctx: &mut tx_context::TxContext
-    // ) {
-    //     assert!(sender(ctx) == admin.admin, ENotAdmin);
-    //     assert!(amount < self.total_profits / 10, ENotMony);
-    //     let question = coin::take(&mut self.balance, amount, ctx); // In case of emergency, the admin can withdraw up to 10% of the total funds
-    //     transfer::public_transfer(question, admin.admin);
+    // Withdraw profits, all profits are transferred to the admin address, can be modified as needed
+    public fun withdraw_profits(
+        _: &AdminCap,
+        self: &mut ParkingLot,
+        amount: u64,
+        ctx: &mut TxContext
+    ) : Coin<SUI> {
+        let coin_ = coin::take(&mut self.balance, amount, ctx); // In case of emergency, the admin can withdraw up to 10% of the total funds
+        self.total_profits = self.total_profits - amount; // Only update the total balance, individual slot balances remain unchanged
+        coin_
+    }
 
-    //     self.total_profits = self.total_profits - amount; // Only update the total balance, individual slot balances remain unchanged
-    // }
-
-    // // Distribute profits, the distribution plan can be modified as needed
-    // public fun distribute_profits(adminpull: &mut ParkingLot, slotowner: &mut Slot, ctx: &mut tx_context::TxContext) {
-    //     assert!(sender(ctx) == slotowner.ownerAddress, ENotAdmin);
-    //     let total_balance = balance::value(&adminpull.balance);
-    //     let admin_amount = total_balance / 10;
-    //     let owner_amount = total_balance * 8 / 10;
-
-    //     let admin_coin = coin::take(&mut adminpull.balance, admin_amount, ctx); // Admin takes 10% of the profits
-    //     transfer::public_transfer(admin_coin, adminpull.admin);
-
-    //     let owner_coin = coin::take(&mut adminpull.balance, owner_amount, ctx); // Slot owner takes 80% of the profits
-    //     transfer::public_transfer(owner_coin, slotowner.ownerAddress);
-
-    //     adminpull.total_profits = adminpull.total_profits - slotowner.slot_profits * 9 / 10;
-    //     slotowner.slot_profits = slotowner.slot_profits / 10; // Calculate the remaining profits
-    // }
-
-    // // Test function to generate parking slots (for testing purposes only)
-    // #[test_only]
-    // public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
-    //     init(ctx);
-    // }
+    // Test function to generate parking slots (for testing purposes only)
+    #[test_only]
+    public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
+        init(ctx);
+    }
 
     fun destroye_slot(self: Slot) {
         let Slot {
