@@ -17,6 +17,7 @@ module parkinglot::parkinglot {
     public struct Slot has key, store {
         id: UID,
         status: bool,
+        seed_num: u8,
         start_time: u64,
         end_time: u64,
         current_user: address,
@@ -64,12 +65,15 @@ module parkinglot::parkinglot {
     }
 
     // Reserve a parking slot
-    public fun reserve_slot(self: &mut ParkingLot, seed_num: u8, c: &Clock, ctx: &mut TxContext) : Slot {
-        assert!(seed_num > 0, EParkingSlotNotAvailable);
+    public fun reserve_slot(self: &mut ParkingLot, seed_num_: u8, c: &Clock, ctx: &mut TxContext) : Slot {
+        assert!(seed_num_ > 0, EParkingSlotNotAvailable);
+        // reserve the slot from table 
+        table::add(&mut self.slots, seed_num_, ctx.sender());
 
         let slot = Slot {
             id: object::new(ctx),
             status: true,
+            seed_num: seed_num_,
             start_time: timestamp_ms(c) + 4 * 3600000,
             end_time:0,
             current_user: ctx.sender()
@@ -77,76 +81,59 @@ module parkinglot::parkinglot {
         slot
     }
 
-    // // Enter a parking slot
-    // public fun enter_slot(slot: &mut Slot, clock: &Clock, user: address) {
-    //     assert!(!slot.status, EParkingSlotNotAvailable);
-    //     slot.status = true;
-    //     slot.start_time = timestamp_ms(clock);
-    //     slot.current_user = user;
-    // }
+    // Exit a parking slot
+    public entry fun exit_slot(slot: Slot, c: &Clock, self: &mut ParkingLot, coin: &mut Coin<SUI>, ctx: &mut TxContext) {
 
-    // // Exit a parking slot
-    // public entry fun exit_slot(slot: &mut Slot, clock: &Clock, parking_lot: &mut ParkingLot, coin: &mut Coin<SUI>, ctx: &mut tx_context::TxContext) {
-    //     assert!(slot.status, EParkingSlotNotOccupied);
-    //     let current_user = slot.current_user;
-    //     assert!(current_user == sender(ctx), EParkingSlotNotOccupied);
+        let parking_fee = calculate_parking_fee(slot.start_time, timestamp_ms(c));
+        let current_user_balance = coin::balance_mut(coin);
+        let payment_coin = coin::take(current_user_balance, parking_fee, ctx);
 
-    //     slot.end_time = timestamp_ms(clock);
+        coin::put(&mut self.balance, payment_coin); // Put into the parking lot balance
 
-    //     let parking_fee = calculate_parking_fee(slot.start_time, slot.end_time);
+        let payment_record = create_payment_record(
+            parking_fee,
+            timestamp_ms(c),
+            slot.current_user,
+            ctx
+        );
+        transfer::public_transfer(payment_record, self.admin);
+        self.total_profits = self.total_profits + parking_fee;
 
-    //     let current_user_balance = coin::balance_mut(coin);
-    //     let payment_coin = coin::take(current_user_balance, parking_fee, ctx);
+        table::remove(&mut self.slots, slot.seed_num);
+        destroye_slot(slot);
+    }
 
-    //     coin::put(&mut parking_lot.balance, payment_coin); // Put into the parking lot balance
+    // Create a payment record
+    public fun create_payment_record(
+        amount: u64,
+        payment_time: u64,
+        user: address,
+        ctx: &mut tx_context::TxContext
+    ): PaymentRecord {
+        let id_ = object::new(ctx);
+        PaymentRecord {
+            id: id_,
+            amount,
+            payment_time,
+            user,
+        }
+    }
 
-    //     slot.slot_profits = slot.slot_profits + parking_fee; // Save the slot's profits
+    // Calculate the parking fee
+    public fun calculate_parking_fee(start_time: u64, end_time: u64): u64 {
+        let duration = (end_time - start_time) / 3600000; // Convert to hours
+        let base_rate: u64;
 
-    //     let payment_record = create_payment_record(
-    //         parking_fee,
-    //         timestamp_ms(clock),
-    //         slot.current_user,
-    //         ctx
-    //     );
-    //     transfer::public_transfer(payment_record, parking_lot.admin);
+        if (duration >= 0 && duration < 10) {
+            base_rate = 3;
+        } else if (duration >= 10 && duration < 100) {
+            base_rate = 2;
+        } else {
+            base_rate = 1;
+        };
 
-    //     slot.status = false;
-    //     slot.current_user = @0x0; // Clear the current user address
-
-    //     parking_lot.total_profits = parking_lot.total_profits + parking_fee;
-    // }
-
-    // // Create a payment record
-    // public fun create_payment_record(
-    //     amount: u64,
-    //     payment_time: u64,
-    //     user: address,
-    //     ctx: &mut tx_context::TxContext
-    // ): PaymentRecord {
-    //     let id_ = object::new(ctx);
-    //     PaymentRecord {
-    //         id: id_,
-    //         amount,
-    //         payment_time,
-    //         user,
-    //     }
-    // }
-
-    // // Calculate the parking fee
-    // public fun calculate_parking_fee(start_time: u64, end_time: u64): u64 {
-    //     let duration = (end_time - start_time) / 3600000; // Convert to hours
-    //     let base_rate: u64;
-
-    //     if (duration >= 0 && duration < 10) {
-    //         base_rate = 3;
-    //     } else if (duration >= 10 && duration < 100) {
-    //         base_rate = 2;
-    //     } else {
-    //         base_rate = 1;
-    //     };
-
-    //     duration * base_rate
-    // }
+        duration * base_rate
+    }
 
     // // Withdraw profits, all profits are transferred to the admin address, can be modified as needed
     // public fun withdraw_profits(
@@ -185,4 +172,16 @@ module parkinglot::parkinglot {
     // public fun test_generate_slots(ctx: &mut tx_context::TxContext) {
     //     init(ctx);
     // }
+
+    fun destroye_slot(self: Slot) {
+        let Slot {
+            id,
+            status: _,
+            seed_num: _,
+            start_time: _,
+            end_time: _,
+            current_user: _
+        } = self;
+        object::delete(id);
+    }
 }
